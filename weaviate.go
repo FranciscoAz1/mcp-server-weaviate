@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
@@ -17,10 +18,17 @@ type WeaviateConnection struct {
 }
 
 func NewWeaviateConnection() (*WeaviateConnection, error) {
-	// TODO: get config from env
+	host := os.Getenv("WEAVIATE_HOST")
+	if host == "" {
+		host = "localhost:8080"
+	}
+	scheme := os.Getenv("WEAVIATE_SCHEME")
+	if scheme == "" {
+		scheme = "http"
+	}
 	client, err := weaviate.NewClient(weaviate.Config{
-		Host:           "localhost:8080",
-		Scheme:         "http",
+		Host:           host,
+		Scheme:         scheme,
 		StartupTimeout: time.Second,
 	})
 	if err != nil {
