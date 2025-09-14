@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -12,6 +13,9 @@ import (
 func main() {
 	ctx := context.Background()
 	cmd := "./mcp-server"
+	if runtime.GOOS == "windows" {
+		cmd = "./mcp-server.exe"
+	}
 
 	c, err := newMCPClient(ctx, cmd)
 	if err != nil {
@@ -37,14 +41,14 @@ func main() {
 
 func newMCPClient(ctx context.Context, cmd string) (*client.Client, error) {
 	c, _ := client.NewStdioMCPClient(cmd, nil)
+	if err := c.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start client: %w", err)
+	}
 	initRes, err := c.Initialize(ctx, mcp.InitializeRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to init client: %w", err)
 	}
 	log.Printf("init result: %+v", initRes)
-	if err := c.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start client: %w", err)
-	}
 	if err := c.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ping server: %w", err)
 	}
