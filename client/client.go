@@ -130,15 +130,16 @@ func testQuery(ctx context.Context, c *client.Client) error {
 	request := mcp.CallToolRequest{}
 	request.Params.Name = "weaviate-query"
 	request.Params.Arguments = map[string]interface{}{
-		"query":            "test",
-		"targetProperties": []string{"name", "category"},
-		"collection":       "TestCollection",
+		"query":            "lihua",
+		"targetProperties": []string{"text", "file_path"},
+		"collection":       "Dataset",
 	}
 	log.Printf("query request: %+v", request)
-	_, err := c.CallTool(ctx, request)
+	res, err := c.CallTool(ctx, request)
 	if err != nil {
 		return fmt.Errorf("failed to call query tool: %v", err)
 	}
+	log.Printf("query result: %+v", res)
 	return nil
 }
 

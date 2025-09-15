@@ -48,11 +48,11 @@ func (conn *WeaviateConnection) InsertOne(ctx context.Context,
 }
 
 func (conn *WeaviateConnection) Query(ctx context.Context, collection,
-	query string, targetProps []string,
+	query string, targetProps []string, limit int,
 ) (string, error) {
 	hybrid := graphql.HybridArgumentBuilder{}
 	hybrid.WithQuery(query)
-	res, err := conn.client.GraphQL().Get().
+	builder := conn.client.GraphQL().Get().
 		WithClassName(collection).WithHybrid(&hybrid).
 		WithFields(func() []graphql.Field {
 			fields := make([]graphql.Field, len(targetProps))
@@ -60,8 +60,11 @@ func (conn *WeaviateConnection) Query(ctx context.Context, collection,
 				fields[i] = graphql.Field{Name: prop}
 			}
 			return fields
-		}()...).
-		Do(context.Background())
+		}()...)
+	if limit > 0 {
+		builder = builder.WithLimit(limit)
+	}
+	res, err := builder.Do(context.Background())
 	if err != nil {
 		return "", err
 	}

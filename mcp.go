@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -29,7 +30,7 @@ func NewMCPServer(config *Config, logger *Logger) (*MCPServer, error) {
 			"Weaviate MCP Server",
 			"0.1.0",
 			server.WithToolCapabilities(true),
-			server.WithPromptCapabilities(true),
+			server.WithPromptCapabilities(false),
 			server.WithResourceCapabilities(true, true),
 			server.WithRecovery(),
 		),
@@ -45,8 +46,8 @@ func NewMCPServer(config *Config, logger *Logger) (*MCPServer, error) {
 	logger.Info("Registering resources...")
 	s.registerResources()
 
-	logger.Info("Registering prompts...")
-	s.registerPrompts()
+	// logger.Info("Registering prompts...")
+	// s.registerPrompts()
 
 	logger.Info("MCP Server initialized successfully")
 	return s, nil
@@ -98,6 +99,7 @@ func (s *MCPServer) registerTools() {
 	if !s.config.IsToolDisabled("weaviate-query") {
 		query := mcp.NewTool(
 			"weaviate-query",
+			mcp.WithDescription("Query objects from a Weaviate collection using hybrid search"),
 			mcp.WithString(
 				"query",
 				mcp.Description("Query data within Weaviate"),
@@ -113,7 +115,31 @@ func (s *MCPServer) registerTools() {
 				mcp.Description("Properties to return with the query. Check available properties via weaviate://schema/{collection} resources"),
 				mcp.Required(),
 			),
+			mcp.WithNumber(
+				"limit",
+				mcp.DefaultNumber(3),
+				mcp.Description("Maximum number of results to return (default: 3)"),
+			),
 		)
+
+		// Optional: log the schema to catch issues early
+		if b, err := json.MarshalIndent(query.InputSchema, "", "  "); err == nil {
+			s.logger.Debug("weaviate-query schema before modification:\n" + string(b))
+		}
+
+		// Fix the array schema by adding missing "items" property
+		if query.InputSchema.Properties != nil {
+			if targetProps, ok := query.InputSchema.Properties["targetProperties"].(map[string]interface{}); ok {
+				targetProps["items"] = map[string]interface{}{"type": "string"}
+				targetProps["minItems"] = 1
+			}
+		}
+
+		// Log schema after modification
+		if b, err := json.MarshalIndent(query.InputSchema, "", "  "); err == nil {
+			s.logger.Debug("weaviate-query schema after modification:\n" + string(b))
+		}
+
 		tools = append(tools, server.ServerTool{Tool: query, Handler: s.weaviateQuery})
 		s.logger.Info("Registered tool: weaviate-query")
 	} else {
@@ -336,6 +362,16 @@ func (s *MCPServer) weaviateQuery(ctx context.Context, req mcp.CallToolRequest) 
 		s.logger.Error("targetProperties array is empty")
 		return mcp.NewToolResultError("targetProperties must contain at least one property name"), nil
 	}
+	// Handle limit parameter (default to 3)
+	limit := 3
+	if limitRaw, ok := args["limit"]; ok {
+		if limitFloat, ok := limitRaw.(float64); ok {
+			limit = int(limitFloat)
+		} else {
+			s.logger.Error("'limit' argument is not a number: %T", limitRaw)
+			return mcp.NewToolResultError("'limit' argument must be a number"), nil
+		}
+	}
 	// Validate targetProps against schema
 	classSchema, err := s.weaviateConn.GetClassSchema(context.Background(), targetCol)
 	if err != nil {
@@ -352,7 +388,7 @@ func (s *MCPServer) weaviateQuery(ctx context.Context, req mcp.CallToolRequest) 
 			return mcp.NewToolResultError(fmt.Sprintf("property '%s' does not exist in collection '%s'", prop, targetCol)), nil
 		}
 	}
-	res, err := s.weaviateConn.Query(context.Background(), targetCol, query, targetProps)
+	res, err := s.weaviateConn.Query(context.Background(), targetCol, query, targetProps, limit)
 	if err != nil {
 		s.logger.Error("Query error: %v", err)
 		return mcp.NewToolResultErrorFromErr("failed to process query", err), nil
