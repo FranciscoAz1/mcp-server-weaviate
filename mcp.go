@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,6 +37,7 @@ func NewMCPServer() (*MCPServer, error) {
 }
 
 func (s *MCPServer) Serve() {
+	log.Println("MCPServer starting: waiting for requests...")
 	server.ServeStdio(s.server)
 }
 
@@ -73,35 +75,65 @@ func (s *MCPServer) registerTools() {
 }
 
 func (s *MCPServer) weaviateInsertOne(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log.Printf("InsertOne called: collection=%v, args=%v", req.Params.Arguments["collection"], req.Params.Arguments)
 	targetCol := s.parseTargetCollection(req)
-	props := req.Params.Arguments["properties"].(map[string]interface{})
-
+	propsRaw, ok := req.Params.Arguments["properties"]
+	if !ok {
+		log.Println("Missing 'properties' argument")
+		return mcp.NewToolResultError("Missing 'properties' argument"), nil
+	}
+	props, ok := propsRaw.(map[string]interface{})
+	if !ok {
+		log.Printf("'properties' argument is not a map: %T", propsRaw)
+		return mcp.NewToolResultError("'properties' argument must be an object"), nil
+	}
 	res, err := s.weaviateConn.InsertOne(context.Background(), targetCol, props)
 	if err != nil {
+		log.Printf("InsertOne error: %v", err)
 		return mcp.NewToolResultErrorFromErr("failed to insert object", err), nil
 	}
+	log.Printf("InsertOne success: id=%v", res.ID.String())
 	return mcp.NewToolResultText(res.ID.String()), nil
 }
 
 func (s *MCPServer) weaviateQuery(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	log.Printf("Query called: collection=%v, args=%v", req.Params.Arguments["collection"], req.Params.Arguments)
 	targetCol := s.parseTargetCollection(req)
-	query := req.Params.Arguments["query"].(string)
-	// TODO: how to enforce `Required` within the sdk so we don't have to validate here
-	props := req.Params.Arguments["targetProperties"].([]interface{})
+	queryRaw, ok := req.Params.Arguments["query"]
+	if !ok {
+		log.Println("Missing 'query' argument")
+		return mcp.NewToolResultError("Missing 'query' argument"), nil
+	}
+	query, ok := queryRaw.(string)
+	if !ok {
+		log.Printf("'query' argument is not a string: %T", queryRaw)
+		return mcp.NewToolResultError("'query' argument must be a string"), nil
+	}
+	propsRaw, ok := req.Params.Arguments["targetProperties"]
+	if !ok {
+		log.Println("Missing 'targetProperties' argument")
+		return mcp.NewToolResultError("Missing 'targetProperties' argument"), nil
+	}
+	props, ok := propsRaw.([]interface{})
+	if !ok {
+		log.Printf("'targetProperties' argument is not an array: %T", propsRaw)
+		return mcp.NewToolResultError("'targetProperties' argument must be an array"), nil
+	}
 	var targetProps []string
-	{
-		for _, prop := range props {
-			typed, ok := prop.(string)
-			if !ok {
-				return mcp.NewToolResultError("targetProperties must contain only strings"), nil
-			}
-			targetProps = append(targetProps, typed)
+	for _, prop := range props {
+		typed, ok := prop.(string)
+		if !ok {
+			log.Printf("targetProperties contains non-string: %v (%T)", prop, prop)
+			return mcp.NewToolResultError("targetProperties must contain only strings"), nil
 		}
+		targetProps = append(targetProps, typed)
 	}
 	res, err := s.weaviateConn.Query(context.Background(), targetCol, query, targetProps)
 	if err != nil {
+		log.Printf("Query error: %v", err)
 		return mcp.NewToolResultErrorFromErr("failed to process query", err), nil
 	}
+	log.Printf("Query success: result=%v", res)
 	return mcp.NewToolResultText(res), nil
 }
 
