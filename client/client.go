@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"runtime"
-
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
