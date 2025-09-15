@@ -20,7 +20,7 @@ type WeaviateConnection struct {
 func NewWeaviateConnection() (*WeaviateConnection, error) {
 	host := os.Getenv("WEAVIATE_HOST")
 	if host == "" {
-		host = "localhost:8080"
+		host = "host.docker.internal:8080"
 	}
 	scheme := os.Getenv("WEAVIATE_SCHEME")
 	if scheme == "" {
