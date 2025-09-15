@@ -1,0 +1,44 @@
+name: weaviate-mcp-server
+description: MCP server for interacting with Weaviate vector database
+homepage: https://github.com/weaviate/mcpviate
+license: MIT
+repository: https://github.com/weaviate/mcpviate
+runtime: go
+mcpServer:
+  command: ./mcp-server
+tools:
+  - name: weaviate-insert-one
+    description: Insert an object into a Weaviate collection
+    inputSchema:
+      type: object
+      properties:
+        collection:
+          type: string
+          description: Name of the target collection
+        properties:
+          type: object
+          description: Object properties to insert
+          required: true
+      required:
+        - properties
+  - name: weaviate-query
+    description: Query objects from a Weaviate collection using hybrid search
+    inputSchema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Query string for hybrid search
+          required: true
+        targetProperties:
+          type: array
+          items:
+            type: string
+          description: Properties to return with the query
+          required: true
+        collection:
+          type: string
+          description: Name of the target collection
+      required:
+        - query
+        - targetProperties

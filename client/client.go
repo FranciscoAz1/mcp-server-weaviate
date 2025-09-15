@@ -12,35 +12,54 @@ import (
 
 func main() {
 	ctx := context.Background()
-	cmd := "./mcp-server"
+	cmd := "./mcp-server-weaviate"
 	if runtime.GOOS == "windows" {
-		cmd = "./mcp-server.exe"
+		cmd = "./mcp-server-weaviate.exe"
 	}
 
+	log.Println("Starting MCP test client...")
 	c, err := newMCPClient(ctx, cmd)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer c.Close()
 
-	{
-		insertRes, err := insertRequest(ctx, c)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("insert-one response: %+v", insertRes)
+	log.Println("Testing tool listing...")
+	if err := testListTools(ctx, c); err != nil {
+		log.Printf("Tool listing test failed: %v", err)
+	} else {
+		log.Println("✓ Tool listing test passed")
 	}
-	{
-		queryRes, err := queryRequest(ctx, c)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("query response: %+v", queryRes)
+
+	log.Println("Testing prompt listing...")
+	if err := testListPrompts(ctx, c); err != nil {
+		log.Printf("Prompt listing test failed: %v", err)
+	} else {
+		log.Println("✓ Prompt listing test passed")
 	}
+
+	log.Println("Testing insert operation...")
+	if err := testInsert(ctx, c); err != nil {
+		log.Printf("Insert test failed: %v", err)
+	} else {
+		log.Println("✓ Insert test passed")
+	}
+
+	log.Println("Testing query operation...")
+	if err := testQuery(ctx, c); err != nil {
+		log.Printf("Query test failed: %v", err)
+	} else {
+		log.Println("✓ Query test passed")
+	}
+
+	log.Println("All tests completed!")
 }
 
 func newMCPClient(ctx context.Context, cmd string) (*client.Client, error) {
-	c, _ := client.NewStdioMCPClient(cmd, nil)
+	c, err := client.NewStdioMCPClient(cmd, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create client: %w", err)
+	}
 	if err := c.Start(ctx); err != nil {
 		return nil, fmt.Errorf("failed to start client: %w", err)
 	}
@@ -53,6 +72,74 @@ func newMCPClient(ctx context.Context, cmd string) (*client.Client, error) {
 		return nil, fmt.Errorf("failed to ping server: %w", err)
 	}
 	return c, nil
+}
+
+func testListTools(ctx context.Context, c *client.Client) error {
+	toolsRes, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+
+	log.Printf("Available tools: %d", len(toolsRes.Tools))
+	for _, tool := range toolsRes.Tools {
+		log.Printf("  - %s: %s", tool.Name, tool.Description)
+	}
+
+	return nil
+}
+
+func testListPrompts(ctx context.Context, c *client.Client) error {
+	promptsRes, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
+	if err != nil {
+		return fmt.Errorf("failed to list prompts: %w", err)
+	}
+
+	log.Printf("Available prompts: %d", len(promptsRes.Prompts))
+	for _, prompt := range promptsRes.Prompts {
+		log.Printf("  - %s: %s", prompt.Name, prompt.Description)
+		if len(prompt.Arguments) > 0 {
+			log.Printf("    Arguments:")
+			for _, arg := range prompt.Arguments {
+				log.Printf("      - %s (%s): %s", arg.Name, arg.Name, arg.Description)
+			}
+		}
+	}
+
+	return nil
+}
+
+func testInsert(ctx context.Context, c *client.Client) error {
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "weaviate-insert-one"
+	request.Params.Arguments = map[string]interface{}{
+		"collection": "TestCollection",
+		"properties": map[string]interface{}{
+			"name":     "Test Item",
+			"category": "test",
+		},
+	}
+	log.Printf("insert request: %+v", request)
+	_, err := c.CallTool(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to call insert-one tool: %v", err)
+	}
+	return nil
+}
+
+func testQuery(ctx context.Context, c *client.Client) error {
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "weaviate-query"
+	request.Params.Arguments = map[string]interface{}{
+		"query":            "test",
+		"targetProperties": []string{"name", "category"},
+		"collection":       "TestCollection",
+	}
+	log.Printf("query request: %+v", request)
+	_, err := c.CallTool(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to call query tool: %v", err)
+	}
+	return nil
 }
 
 func insertRequest(ctx context.Context, c *client.Client) (*mcp.CallToolResult, error) {

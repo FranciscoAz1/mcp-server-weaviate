@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/weaviate/weaviate-go-client/v4/weaviate"
@@ -17,23 +16,18 @@ type WeaviateConnection struct {
 	client *weaviate.Client
 }
 
-func NewWeaviateConnection() (*WeaviateConnection, error) {
-	host := os.Getenv("WEAVIATE_HOST")
-	if host == "" {
-		host = "host.docker.internal:8080"
-	}
-	scheme := os.Getenv("WEAVIATE_SCHEME")
-	if scheme == "" {
-		scheme = "http"
-	}
+func NewWeaviateConnection(config *Config, logger *Logger) (*WeaviateConnection, error) {
+	logger.Info("Connecting to Weaviate at %s://%s", config.WeaviateScheme, config.WeaviateHost)
 	client, err := weaviate.NewClient(weaviate.Config{
-		Host:           host,
-		Scheme:         scheme,
+		Host:           config.WeaviateHost,
+		Scheme:         config.WeaviateScheme,
 		StartupTimeout: time.Second,
 	})
 	if err != nil {
+		logger.Error("Failed to connect to Weaviate: %v", err)
 		return nil, fmt.Errorf("connect to weaviate: %w", err)
 	}
+	logger.Info("Successfully connected to Weaviate")
 	return &WeaviateConnection{client}, nil
 }
 
@@ -76,6 +70,14 @@ func (conn *WeaviateConnection) Query(ctx context.Context, collection,
 		return "", fmt.Errorf("unmarshal query response: %w", err)
 	}
 	return string(b), nil
+}
+
+func (conn *WeaviateConnection) GetClassSchema(ctx context.Context, className string) (*models.Class, error) {
+	class, err := conn.client.Schema().ClassGetter().WithClassName(className).Do(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get class schema: %w", err)
+	}
+	return class, nil
 }
 
 func (conn *WeaviateConnection) batchInsert(ctx context.Context, objs ...*models.Object) ([]models.ObjectsGetResponse, error) {
