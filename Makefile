@@ -18,6 +18,9 @@ run-server: build
 run-server-debug: build
 	client/mcp-server$(EXT) --log-level debug --log-output both
 
+run-server-http-debug: build
+	client/mcp-server$(EXT) --log-level debug --log-output both --transport http
+
 test: build
 	cd client && go run client.go
 

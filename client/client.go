@@ -12,9 +12,9 @@ import (
 
 func main() {
 	ctx := context.Background()
-	cmd := "./mcp-server-weaviate"
+	cmd := "./mcp-server"
 	if runtime.GOOS == "windows" {
-		cmd = "./mcp-server-weaviate.exe"
+		cmd = "./mcp-server.exe"
 	}
 
 	log.Println("Starting MCP test client...")
@@ -31,26 +31,33 @@ func main() {
 		log.Println("✓ Tool listing test passed")
 	}
 
-	log.Println("Testing prompt listing...")
-	if err := testListPrompts(ctx, c); err != nil {
-		log.Printf("Prompt listing test failed: %v", err)
+	log.Println("Testing generate text operation...")
+	if err := testGenerateText(ctx, c); err != nil {
+		log.Printf("Generate text test failed: %v", err)
 	} else {
-		log.Println("✓ Prompt listing test passed")
+		log.Println("✓ Generate text test passed")
 	}
 
-	log.Println("Testing insert operation...")
-	if err := testInsert(ctx, c); err != nil {
-		log.Printf("Insert test failed: %v", err)
-	} else {
-		log.Println("✓ Insert test passed")
-	}
+	// log.Println("Testing prompt listing...")
+	// if err := testListPrompts(ctx, c); err != nil {
+	// 	log.Printf("Prompt listing test failed: %v", err)
+	// } else {
+	// 	log.Println("✓ Prompt listing test passed")
+	// }
 
-	log.Println("Testing query operation...")
-	if err := testQuery(ctx, c); err != nil {
-		log.Printf("Query test failed: %v", err)
-	} else {
-		log.Println("✓ Query test passed")
-	}
+	// log.Println("Testing insert operation...")
+	// if err := testInsert(ctx, c); err != nil {
+	// 	log.Printf("Insert test failed: %v", err)
+	// } else {
+	// 	log.Println("✓ Insert test passed")
+	// }
+
+	// log.Println("Testing query operation...")
+	// if err := testQuery(ctx, c); err != nil {
+	// 	log.Printf("Query test failed: %v", err)
+	// } else {
+	// 	log.Println("✓ Query test passed")
+	// }
 
 	log.Println("All tests completed!")
 }
@@ -105,6 +112,23 @@ func testListPrompts(ctx context.Context, c *client.Client) error {
 		}
 	}
 
+	return nil
+}
+
+func testGenerateText(ctx context.Context, c *client.Client) error {
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "weaviate-generate-text"
+	request.Params.Arguments = map[string]interface{}{
+		"prompt":     "What are the main topics in these government documents?",
+		"collection": "Dataset",
+		"maxTokens":  150,
+	}
+	log.Printf("generate text request: %+v", request)
+	res, err := c.CallTool(ctx, request)
+	if err != nil {
+		return fmt.Errorf("failed to call generate text tool: %v", err)
+	}
+	log.Printf("generate text result: %+v", res)
 	return nil
 }
 

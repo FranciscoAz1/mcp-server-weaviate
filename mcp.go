@@ -64,8 +64,22 @@ func (s *MCPServer) ServeStdio() error {
 }
 
 func (s *MCPServer) ServeHTTP(host string, port int) error {
-	s.logger.Info("HTTP transport not yet implemented, falling back to stdio")
-	return server.ServeStdio(s.server)
+	s.logger.Info("Starting HTTP server on %s:%d", host, port)
+
+	// Log a warning about HTTP support
+	s.logger.Info("Note: The mcp-go StreamableHTTP server appears to have compatibility issues")
+	s.logger.Info("The HTTP transport may not be fully functional in this version")
+	s.logger.Info("For reliable operation, use stdio transport with: --transport stdio")
+
+	// Try to create StreamableHTTP server for MCP
+	httpServer := server.NewStreamableHTTPServer(s.server)
+
+	// Start the server
+	addr := fmt.Sprintf("%s:%d", host, port)
+	s.logger.Info("HTTP server listening on %s", addr)
+	s.logger.Info("If HTTP endpoints don't respond, please use stdio transport instead")
+
+	return httpServer.Start(addr)
 }
 
 func (s *MCPServer) registerTools() {
@@ -144,6 +158,34 @@ func (s *MCPServer) registerTools() {
 		s.logger.Info("Registered tool: weaviate-query")
 	} else {
 		s.logger.Info("Skipped tool weaviate-query: disabled")
+	}
+
+	// weaviate-generate-text tool
+	if !s.config.IsToolDisabled("weaviate-generate-text") {
+		generateText := mcp.NewTool(
+			"weaviate-generate-text",
+			mcp.WithDescription("Generate text using Weaviate's generative search capabilities"),
+			mcp.WithString(
+				"prompt",
+				mcp.Description("Text prompt for generation"),
+				mcp.Required(),
+			),
+			mcp.WithString(
+				"collection",
+				mcp.Description("Name of the target collection"),
+				mcp.Required(),
+			),
+			mcp.WithNumber(
+				"maxTokens",
+				mcp.DefaultNumber(100),
+				mcp.Description("Maximum number of tokens to generate (default: 100)"),
+			),
+		)
+
+		tools = append(tools, server.ServerTool{Tool: generateText, Handler: s.weaviateGenerateText})
+		s.logger.Info("Registered tool: weaviate-generate-text")
+	} else {
+		s.logger.Info("Skipped tool weaviate-generate-text: disabled")
 	}
 
 	s.server.AddTools(tools...)
@@ -394,6 +436,44 @@ func (s *MCPServer) weaviateQuery(ctx context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultErrorFromErr("failed to process query", err), nil
 	}
 	s.logger.Info("Query success: result length=%d", len(res))
+	return mcp.NewToolResultText(res), nil
+}
+
+func (s *MCPServer) weaviateGenerateText(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	s.logger.Debug("GenerateText called: collection=%v, args=%v", args["collection"], args)
+
+	targetCol := s.parseTargetCollection(req)
+
+	promptRaw, ok := args["prompt"]
+	if !ok {
+		s.logger.Error("Missing 'prompt' argument")
+		return mcp.NewToolResultError("Missing 'prompt' argument"), nil
+	}
+	prompt, ok := promptRaw.(string)
+	if !ok {
+		s.logger.Error("'prompt' argument is not a string: %T", promptRaw)
+		return mcp.NewToolResultError("'prompt' argument must be a string"), nil
+	}
+
+	// Handle maxTokens parameter (default to 100)
+	maxTokens := 100
+	if maxTokensRaw, ok := args["maxTokens"]; ok {
+		if maxTokensFloat, ok := maxTokensRaw.(float64); ok {
+			maxTokens = int(maxTokensFloat)
+		} else {
+			s.logger.Error("'maxTokens' argument is not a number: %T", maxTokensRaw)
+			return mcp.NewToolResultError("'maxTokens' argument must be a number"), nil
+		}
+	}
+
+	res, err := s.weaviateConn.GenerateText(context.Background(), targetCol, prompt, maxTokens)
+	if err != nil {
+		s.logger.Error("GenerateText error: %v", err)
+		return mcp.NewToolResultErrorFromErr("failed to generate text", err), nil
+	}
+
+	s.logger.Info("GenerateText success: result length=%d", len(res))
 	return mcp.NewToolResultText(res), nil
 }
 

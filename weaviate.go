@@ -75,6 +75,53 @@ func (conn *WeaviateConnection) Query(ctx context.Context, collection,
 	return string(b), nil
 }
 
+// Create here a function, the same as the query, but instead of using just query hybrid, use Weaviate's generate text
+func (conn *WeaviateConnection) GenerateText(ctx context.Context, collection, query string, maxTokens int) (string, error) {
+	// Use Weaviate's generate text feature with hybrid search + generation
+	// Note: This requires Ollama to be running and accessible from Weaviate
+
+	// Setup hybrid search
+	hybrid := graphql.HybridArgumentBuilder{}
+	hybrid.WithQuery(query)
+	hybrid.WithTargetVectors("text")
+
+	// Set a reasonable limit for hybrid search results
+	limit := 3 // Default limit
+	if maxTokens > 0 {
+		// Use maxTokens as a proxy for result limit (capped at 10)
+		calculatedLimit := maxTokens / 10
+		if calculatedLimit < 1 {
+			limit = 1
+		} else if calculatedLimit > 10 {
+			limit = 10
+		} else {
+			limit = calculatedLimit
+		}
+	}
+	prompt := "Answer briefly: " + query
+	// Try with generative search first
+	generativeSearch := graphql.NewGenerativeSearch()
+	generativeSearch.GroupedResult(prompt, "text")
+
+	// Build the query with generative search
+	builder := conn.client.GraphQL().Get().
+		WithClassName(collection).
+		WithHybrid(&hybrid).
+		WithLimit(limit).
+		WithGenerativeSearch(generativeSearch)
+
+	resp, err := builder.Do(ctx)
+
+	if err != nil {
+		return "", fmt.Errorf("weaviate generate text request failed: %w", err)
+	}
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", fmt.Errorf("unmarshal generate text response: %w", err)
+	}
+	return string(b), nil
+}
+
 func (conn *WeaviateConnection) GetClassSchema(ctx context.Context, className string) (*models.Class, error) {
 	class, err := conn.client.Schema().ClassGetter().WithClassName(className).Do(ctx)
 	if err != nil {
