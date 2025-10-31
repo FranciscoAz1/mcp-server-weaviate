@@ -43,7 +43,7 @@ func LoadConfig() (*Config, error) {
 		LogLevel:          getEnvOrDefault("MCP_LOG_LEVEL", "info"),
 		LogOutput:         getEnvOrDefault("MCP_LOG_OUTPUT", "stderr"),
 		ReadOnly:          getEnvBool("MCP_READ_ONLY"),
-		DefaultCollection: getEnvOrDefault("MCP_DEFAULT_COLLECTION", "DefaultCollection"),
+		DefaultCollection: getEnvOrDefault("MCP_DEFAULT_COLLECTION", "Dataset"),
 	}
 
 	// Parse HTTP port

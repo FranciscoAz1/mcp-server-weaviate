@@ -188,6 +188,102 @@ func (s *MCPServer) registerTools() {
 		s.logger.Info("Skipped tool weaviate-generate-text: disabled")
 	}
 
+	// weaviate-origin tool - hybrid query with cross-references
+	if !s.config.IsToolDisabled("weaviate-origin") {
+		origin := mcp.NewTool(
+			"weaviate-origin",
+			mcp.WithDescription("Query objects from a Weaviate collection using hybrid search and get next-hop connections"),
+			mcp.WithString(
+				"query",
+				mcp.Description("Query data within Weaviate"),
+				mcp.Required(),
+			),
+			mcp.WithString(
+				"collection",
+				mcp.Description("Name of the target collection"),
+				mcp.Required(),
+			),
+			mcp.WithArray(
+				"targetProperties",
+				mcp.Description("Properties to return with the query"),
+				mcp.Required(),
+			),
+			mcp.WithNumber(
+				"limit",
+				mcp.DefaultNumber(5),
+				mcp.Description("Maximum number of results to return (default: 5)"),
+			),
+		)
+
+		// Fix the array schema
+		if origin.InputSchema.Properties != nil {
+			if targetProps, ok := origin.InputSchema.Properties["targetProperties"].(map[string]interface{}); ok {
+				targetProps["items"] = map[string]interface{}{"type": "string"}
+				targetProps["minItems"] = 1
+			}
+		}
+
+		tools = append(tools, server.ServerTool{Tool: origin, Handler: s.weaviateOrigin})
+		s.logger.Info("Registered tool: weaviate-origin")
+	} else {
+		s.logger.Info("Skipped tool weaviate-origin: disabled")
+	}
+
+	// weaviate-follow-ref tool - follow specific reference property
+	if !s.config.IsToolDisabled("weaviate-follow-ref") {
+		followRef := mcp.NewTool(
+			"weaviate-follow-ref",
+			mcp.WithDescription("Query objects from a Weaviate collection using hybrid search and follow a specific reference property"),
+			mcp.WithString(
+				"query",
+				mcp.Description("Query data within Weaviate"),
+				mcp.Required(),
+			),
+			mcp.WithString(
+				"collection",
+				mcp.Description("Name of the target collection"),
+				mcp.Required(),
+			),
+			mcp.WithString(
+				"refProp",
+				mcp.Description("Reference property to follow"),
+				mcp.Required(),
+			),
+			mcp.WithArray(
+				"baseProps",
+				mcp.Description("Properties to return from the base collection"),
+				mcp.Required(),
+			),
+			mcp.WithArray(
+				"refProps",
+				mcp.Description("Properties to return from the referenced objects"),
+				mcp.Required(),
+			),
+			mcp.WithNumber(
+				"limit",
+				mcp.DefaultNumber(5),
+				mcp.Description("Maximum number of results to return (default: 5)"),
+			),
+		)
+
+		// Fix the array schemas
+		if followRef.InputSchema.Properties != nil {
+			if baseProps, ok := followRef.InputSchema.Properties["baseProps"].(map[string]interface{}); ok {
+				baseProps["items"] = map[string]interface{}{"type": "string"}
+				baseProps["minItems"] = 1
+			}
+			if refProps, ok := followRef.InputSchema.Properties["refProps"].(map[string]interface{}); ok {
+				refProps["items"] = map[string]interface{}{"type": "string"}
+				refProps["minItems"] = 1
+			}
+		}
+
+		tools = append(tools, server.ServerTool{Tool: followRef, Handler: s.weaviateFollowRef})
+		s.logger.Info("Registered tool: weaviate-follow-ref")
+	} else {
+		s.logger.Info("Skipped tool weaviate-follow-ref: disabled")
+	}
+
 	s.server.AddTools(tools...)
 }
 
@@ -728,4 +824,163 @@ Use the weaviate-insert-one tool with:
 			),
 		},
 	), nil
+}
+
+func (s *MCPServer) weaviateOrigin(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	s.logger.Debug("Origin called: collection=%v, args=%v", args["collection"], args)
+
+	targetCol := s.parseTargetCollection(req)
+
+	queryRaw, ok := args["query"]
+	if !ok {
+		s.logger.Error("Missing 'query' argument")
+		return mcp.NewToolResultError("Missing 'query' argument"), nil
+	}
+	query, ok := queryRaw.(string)
+	if !ok {
+		s.logger.Error("'query' argument is not a string: %T", queryRaw)
+		return mcp.NewToolResultError("'query' argument must be a string"), nil
+	}
+
+	propsRaw, ok := args["targetProperties"]
+	if !ok {
+		s.logger.Error("Missing 'targetProperties' argument")
+		return mcp.NewToolResultError("Missing 'targetProperties' argument"), nil
+	}
+	props, ok := propsRaw.([]interface{})
+	if !ok {
+		s.logger.Error("'targetProperties' argument is not an array: %T", propsRaw)
+		return mcp.NewToolResultError("'targetProperties' argument must be an array"), nil
+	}
+
+	var targetProps []string
+	for _, prop := range props {
+		typed, ok := prop.(string)
+		if !ok {
+			s.logger.Error("targetProperties contains non-string: %v (%T)", prop, prop)
+			return mcp.NewToolResultError("targetProperties must contain only strings"), nil
+		}
+		targetProps = append(targetProps, typed)
+	}
+
+	if len(targetProps) == 0 {
+		s.logger.Error("targetProperties array is empty")
+		return mcp.NewToolResultError("targetProperties array cannot be empty"), nil
+	}
+
+	// Handle limit parameter (default to 5)
+	limit := 5
+	if limitRaw, ok := args["limit"]; ok {
+		if limitFloat, ok := limitRaw.(float64); ok {
+			limit = int(limitFloat)
+		}
+	}
+
+	res, err := s.weaviateConn.QueryOrigin(context.Background(), targetCol, query, limit, targetProps)
+	if err != nil {
+		s.logger.Error("QueryOrigin error: %v", err)
+		return mcp.NewToolResultErrorFromErr("failed to query with origin", err), nil
+	}
+
+	s.logger.Info("QueryOrigin success: result length=%d", len(res))
+	return mcp.NewToolResultText(res), nil
+}
+
+func (s *MCPServer) weaviateFollowRef(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	s.logger.Debug("FollowRef called: collection=%v, args=%v", args["collection"], args)
+
+	targetCol := s.parseTargetCollection(req)
+
+	queryRaw, ok := args["query"]
+	if !ok {
+		s.logger.Error("Missing 'query' argument")
+		return mcp.NewToolResultError("Missing 'query' argument"), nil
+	}
+	query, ok := queryRaw.(string)
+	if !ok {
+		s.logger.Error("'query' argument is not a string: %T", queryRaw)
+		return mcp.NewToolResultError("'query' argument must be a string"), nil
+	}
+
+	refPropRaw, ok := args["refProp"]
+	if !ok {
+		s.logger.Error("Missing 'refProp' argument")
+		return mcp.NewToolResultError("Missing 'refProp' argument"), nil
+	}
+	refProp, ok := refPropRaw.(string)
+	if !ok {
+		s.logger.Error("'refProp' argument is not a string: %T", refPropRaw)
+		return mcp.NewToolResultError("'refProp' argument must be a string"), nil
+	}
+
+	basePropsRaw, ok := args["baseProps"]
+	if !ok {
+		s.logger.Error("Missing 'baseProps' argument")
+		return mcp.NewToolResultError("Missing 'baseProps' argument"), nil
+	}
+	basePropsArr, ok := basePropsRaw.([]interface{})
+	if !ok {
+		s.logger.Error("'baseProps' argument is not an array: %T", basePropsRaw)
+		return mcp.NewToolResultError("'baseProps' argument must be an array"), nil
+	}
+
+	var baseProps []string
+	for _, prop := range basePropsArr {
+		typed, ok := prop.(string)
+		if !ok {
+			s.logger.Error("baseProps contains non-string: %v (%T)", prop, prop)
+			return mcp.NewToolResultError("baseProps must contain only strings"), nil
+		}
+		baseProps = append(baseProps, typed)
+	}
+
+	if len(baseProps) == 0 {
+		s.logger.Error("baseProps array is empty")
+		return mcp.NewToolResultError("baseProps array cannot be empty"), nil
+	}
+
+	refPropsRaw, ok := args["refProps"]
+	if !ok {
+		s.logger.Error("Missing 'refProps' argument")
+		return mcp.NewToolResultError("Missing 'refProps' argument"), nil
+	}
+	refPropsArr, ok := refPropsRaw.([]interface{})
+	if !ok {
+		s.logger.Error("'refProps' argument is not an array: %T", refPropsRaw)
+		return mcp.NewToolResultError("'refProps' argument must be an array"), nil
+	}
+
+	var refProps []string
+	for _, prop := range refPropsArr {
+		typed, ok := prop.(string)
+		if !ok {
+			s.logger.Error("refProps contains non-string: %v (%T)", prop, prop)
+			return mcp.NewToolResultError("refProps must contain only strings"), nil
+		}
+		refProps = append(refProps, typed)
+	}
+
+	if len(refProps) == 0 {
+		s.logger.Error("refProps array is empty")
+		return mcp.NewToolResultError("refProps array cannot be empty"), nil
+	}
+
+	// Handle limit parameter (default to 5)
+	limit := 5
+	if limitRaw, ok := args["limit"]; ok {
+		if limitFloat, ok := limitRaw.(float64); ok {
+			limit = int(limitFloat)
+		}
+	}
+
+	res, err := s.weaviateConn.QueryWithRefs(context.Background(), targetCol, refProp, query, limit, baseProps, refProps)
+	if err != nil {
+		s.logger.Error("QueryWithRefs error: %v", err)
+		return mcp.NewToolResultErrorFromErr("failed to query with refs", err), nil
+	}
+
+	s.logger.Info("QueryWithRefs success: result length=%d", len(res))
+	return mcp.NewToolResultText(res), nil
 }
